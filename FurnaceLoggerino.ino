@@ -4,9 +4,9 @@
  */
 
 // I/O provided by the Adafruit Logger shield
+#define SQ_WAVE_IN  (2)
 #define LED_GREEN   (3)
 #define LED_RED     (5)
-#define SQ_WAVE_IN  (7)
 #define WRITE_PROT  (8)
 #define CARD_DET    (9)
 #define SD_CS       (10)
@@ -24,12 +24,22 @@
 #include <SPI.h>
 #include <SD.h>
 #include <RTClib.h>
+#include <time.h>
+#include <avr/wdt.h>
 
 const int chipSelect = SD_CS;
 RTC_PCF8523 rtc;
-DateTime now;
-uint32_t boot_time;
-uint32_t last_time;
+time_t now;
+time_t boot_time;
+time_t last_time;
+
+void reboot(void) {
+  wdt_disable();
+  wdt_enable(WDTO_15MS);
+  while (true) {
+    // BUSY LOOP
+  }
+}
 
 bool sd_init() {
   bool success = false;
@@ -45,39 +55,19 @@ bool sd_init() {
   return success;
 }
 
-void print_with_leading_zero(int n) {
-  if (n < 10) {
-    Serial.print('0');
-  }
-  Serial.print(n, DEC);
-}
-
 void print_date() {
-  Serial.print(F("Date: "));
-  Serial.print(now.year(), DEC);
-  Serial.print('/');
-  print_with_leading_zero(now.month());
-  Serial.print('/');
-  print_with_leading_zero(now.day());
-  /*
-  Serial.print(F(" ("));
-  Serial.print(dayOfTheWeek[now.dayOfTheWeek()]);
-  Serial.print(')');
-  */
-  Serial.print(' ');
-  print_with_leading_zero(now.hour());
-  Serial.print(':');
-  print_with_leading_zero(now.minute());
-  Serial.print(':');
-  print_with_leading_zero(now.second());
-  Serial.println();
+  time_t time_now = time(NULL);
+  char *ascii_time = ctime(&time_now);
+
+  Serial.println(ascii_time);
 }
 
 void cmd_exec(char *buf) {
+  bool success = true;
   switch (*buf) {
     case 'u': // uptime
         Serial.print(F("Uptime: "));
-        Serial.print(now.unixtime() - boot_time, DEC);
+        Serial.print(difftime(now, boot_time), DEC);
         Serial.println();
         break;
     case 'D': // epochDate
@@ -87,15 +77,21 @@ void cmd_exec(char *buf) {
         }
         else if (isDigit(buf[2])) {
           rtc.adjust(DateTime(strtoul(&buf[2], NULL, 10)));
-          now = rtc.now();
+          now = rtc.now().secondstime();
           print_date();
+          // Reboot to sync to new clock time
+          reboot();
         }
         else {
-          err(__LINE__, "DATE");
+          success = false;
         }
         break;
     default:
-        err(__LINE__, buf);
+        success = false;
+  }
+
+  if (success == false) {
+    Serial.println(F("ERROR"));
   }
 }
 
@@ -154,13 +150,17 @@ void setup() {
     err(__LINE__, "RTC");
     while(1) delay(10);
   }
-  Serial.println(__LINE__);
   
   if (! rtc.initialized() || rtc.lostPower()) {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
   }
 
-  rtc.start();
+  rtc.deconfigureAllTimers();
+  //rtc.start();
+  set_system_time(rtc.now().secondstime());
+
+  rtc.enableSecondTimer();
+  attachInterrupt(digitalPinToInterrupt(SQ_WAVE_IN), system_tick, FALLING);
 
   if (sd_init() == false) {
     while (true) {
@@ -168,14 +168,14 @@ void setup() {
     }
   }
 
-  now = rtc.now();
-  boot_time = now.unixtime();
+  now = time(NULL);
+  boot_time = now;
   last_time = boot_time;
 
   // Log the boot event to the logfile
   File logfile = SD.open(LOGFILE, FILE_WRITE);
   if (logfile) {
-    logfile.print(boot_time, DEC);
+    logfile.print(boot_time, DEC); // Time in seconds since y2k
     logfile.println(",BOOT");
     logfile.close();
   }
@@ -185,7 +185,7 @@ void setup() {
 }
 
 void loop() {
-  now = rtc.now();
+  now = time(NULL);
 
   if (Serial.available()) {
     handle_serial();
@@ -193,8 +193,8 @@ void loop() {
 
   digitalWrite(LED_RED, digitalRead(CARD_DET));
 
-  if (now.unixtime() != last_time) {
-    last_time = now.unixtime();
+  if (now != last_time) {
+    last_time = now;
 
     digitalWrite(LED_GREEN, (last_time & 1) ? HIGH : LOW);
   }
