@@ -25,93 +25,24 @@
 #include <SD.h>
 #include <RTClib.h>
 
-Sd2Card card;
-SdVolume volume;
-SdFile root;
 const int chipSelect = SD_CS;
 RTC_PCF8523 rtc;
 DateTime now;
 uint32_t boot_time;
+uint32_t last_time;
 
-// const char *dayOfTheWeek[7] = {"SUN", "MON", "TUE", "WED", "THU", "FRI", "SAT"};
+bool sd_init() {
+  bool success = false;
+  Serial.print(F("\nSD Initialization: "));
 
-void sd_init() {
-  Serial.print(F("\Initialization: "));
-
-  // we'll use the initialization code from the utility libraries
-  // since we're just testing if the card is working!
-  if (!card.init(SPI_HALF_SPEED, chipSelect)) {
-    err(__LINE__, "card.init");
-    /*
-    Serial.println(F("initialization failed. Things to check:"));
-    Serial.println(F("* is a card inserted?"));
-    Serial.println(F("* is your wiring correct?"));
-    Serial.println(F("* did you change the chipSelect pin to match your shield or module?"));
-    Serial.println(F("Note: press reset button on the board and reopen this Serial Monitor after fixing your issue!"));
-    */
-    while (1);
+  if (!SD.begin(chipSelect)) {
+    Serial.println(F("FAIL"));
   } else {
-    Serial.println(F("Card present"));
+    Serial.println(F("Success"));
+    success = true;
   }
 
-#if 0
-  // print the type of card
-  Serial.println();
-  Serial.print(F("Card type:         "));
-  switch (card.type()) {
-    case SD_CARD_TYPE_SD1:
-      Serial.println(F("SD1"));
-      break;
-    case SD_CARD_TYPE_SD2:
-      Serial.println(F("SD2"));
-      break;
-    case SD_CARD_TYPE_SDHC:
-      Serial.println(F("SDHC"));
-      break;
-    default:
-      Serial.println(F("Unknown"));
-  }
-#endif
-
-  // Now we will try to open the 'volume'/'partition' - it should be FAT16 or FAT32
-  if (!volume.init(card)) {
-    Serial.println(F("No FAT16/FAT32 partition."));
-    while (1);
-  }
-
-/*
-  Serial.print(F("Clusters:          "));
-  Serial.println(volume.clusterCount());
-  Serial.print(F("Blocks x Cluster:  "));
-  Serial.println(volume.blocksPerCluster());
-
-  Serial.print(F("Total Blocks:      "));
-  Serial.println(volume.blocksPerCluster() * volume.clusterCount());
-  Serial.println();
-
-  // print the type and size of the first FAT-type volume
-  uint32_t volumesize;
-  Serial.print(F("Volume type is:    FAT"));
-  Serial.println(volume.fatType(), DEC);
-
-  volumesize = volume.blocksPerCluster();    // clusters are collections of blocks
-  volumesize *= volume.clusterCount();       // we'll have a lot of clusters
-  volumesize /= 2;                           // SD card blocks are always 512 bytes (2 blocks are 1 KB)
-  Serial.print(F("Volume size (KB):  "));
-  Serial.println(volumesize);
-  Serial.print(F("Volume size (MB):  "));
-  volumesize /= 1024;
-  Serial.println(volumesize);
-  Serial.print(F("Volume size (GB):  "));
-  Serial.println((float)volumesize / 1024.0);
-
-  Serial.println(F("\nFiles found on the card (name, date and size in bytes): "));
-  root.openRoot(volume);
-
-  // list all files in the card with date and size
-  root.ls(LS_R | LS_DATE | LS_SIZE);
-  root.close();
-  */
+  return success;
 }
 
 void print_with_leading_zero(int n) {
@@ -231,13 +162,27 @@ void setup() {
 
   rtc.start();
 
-  sd_init();
+  if (sd_init() == false) {
+    while (true) {
+      // BUSY LOOP
+    }
+  }
 
   now = rtc.now();
   boot_time = now.unixtime();
-}
+  last_time = boot_time;
 
-DateTime last;
+  // Log the boot event to the logfile
+  File logfile = SD.open(LOGFILE, FILE_WRITE);
+  if (logfile) {
+    logfile.print(boot_time, DEC);
+    logfile.println(",BOOT");
+    logfile.close();
+  }
+  else {
+    Serial.print(F("LOGFILE ERR"));
+  }
+}
 
 void loop() {
   now = rtc.now();
@@ -248,18 +193,10 @@ void loop() {
 
   digitalWrite(LED_RED, digitalRead(CARD_DET));
 
-  if (now != last) {
-    last = now;
+  if (now.unixtime() != last_time) {
+    last_time = now.unixtime();
 
-    digitalWrite(LED_GREEN, (now.second() & 1) ? HIGH : LOW);
-
-/*
-    Serial.print(F(" since midnight 1/1/1970 = "));
-    Serial.print(now.unixtime());
-    Serial.print(F("s = "));
-    Serial.print(now.unixtime() / 86400L);
-    Serial.println('d');
-*/
+    digitalWrite(LED_GREEN, (last_time & 1) ? HIGH : LOW);
   }
 
   delay(10);
