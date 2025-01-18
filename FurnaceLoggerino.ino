@@ -23,6 +23,8 @@
 
 #define ISO_TIME
 
+#define NUM_ITEMS(x)  (sizeof(x) / sizeof(x[0]))
+
 #include <SPI.h>
 #include <SD.h>
 #include <RTClib.h>
@@ -34,6 +36,58 @@ RTC_PCF8523 rtc;
 time_t now;
 time_t boot_time;
 time_t last_time;
+time_t last_hb_time;
+
+#define HB_INTERVAL (ONE_HOUR / 4)
+
+typedef struct {
+  uint32_t timestamp;
+  unsigned char heartbeat;
+  unsigned char fan_on;
+  unsigned char low_on;
+  unsigned char high_on;
+} log_entry_t;
+
+log_entry_t log_buf[32];
+unsigned log_idx = 0;
+
+void add_log_entry(uint32_t timestamp, bool hb, bool fan, bool low, bool high) {
+  if (log_idx < NUM_ITEMS(log_buf)) {
+    log_buf[log_idx].timestamp = timestamp;
+    log_buf[log_idx].heartbeat = hb;
+    log_buf[log_idx].fan_on = fan;
+    log_buf[log_idx].low_on = low;
+    log_buf[log_idx].high_on = high;
+    log_idx++;
+  }
+}
+
+unsigned num_log_entries(void) {
+  return log_idx;
+}
+
+void write_log(void) {
+  // Log the buffered event data to the logfile
+  File logfile = SD.open(LOGFILE, FILE_WRITE);
+  if (logfile) {
+    for (unsigned i=0; i<log_idx; i++) {
+      logfile.print(log_buf[i].timestamp + (long)UNIX_OFFSET);
+      if (log_buf[i].heartbeat) {
+        logfile.println(F(",HEARTBEAT"));
+      }
+      else {
+        logfile.print(',');
+        logfile.print(log_buf[i].fan_on ? 1 : 0);
+        logfile.print(',');
+        logfile.print(log_buf[i].low_on ? 1 : 0);
+        logfile.print(',');
+        logfile.println(log_buf[i].high_on ? 1 : 0);
+      }
+      logfile.close();
+      log_idx = 0;
+    }
+  }
+}
 
 void reboot(void) {
   wdt_disable();
@@ -110,6 +164,9 @@ void cmd_exec(char *buf) {
           }
         }
         break;
+    case 'f': // flush log buffer
+        write_log();
+        break;
     default:
         success = false;
   }
@@ -141,19 +198,6 @@ void handle_serial() {
   }
 }
 
-void err(unsigned line, const char *buf) {
-  Serial.print(F("ERR: "));
-  if (buf != NULL) {
-    Serial.print(line, DEC);
-    Serial.print(' ');
-    Serial.println(buf);
-  }
-  else {
-    Serial.println(line, DEC);
-  }
-  Serial.flush();
-}
-
 void setup() {
   Serial.begin(115200);
 
@@ -171,8 +215,10 @@ void setup() {
   pinMode(HIGH_IN, INPUT);
 
   if (! rtc.begin()) {
-    err(__LINE__, "RTC");
-    while(1) delay(10);
+    Serial.println("RTC ERROR");
+    while (true) {
+      delay(10);
+    }
   }
   
   if (! rtc.initialized() || rtc.lostPower()) {
@@ -221,6 +267,15 @@ void loop() {
     last_time = now;
 
     digitalWrite(LED_GREEN, (last_time & 1) ? HIGH : LOW);
+  }
+
+  if (difftime(now, last_hb_time) >= HB_INTERVAL) {
+    add_log_entry(now, true, false, false, false);
+    last_hb_time = now;
+  }
+
+  if (num_log_entries() > 16) {
+    write_log();
   }
 
   delay(10);
