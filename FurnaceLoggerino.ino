@@ -21,6 +21,8 @@
 
 #define LOGFILE     "FURNACE.LOG"
 
+#define ISO_TIME
+
 #include <SPI.h>
 #include <SD.h>
 #include <RTClib.h>
@@ -57,8 +59,12 @@ bool sd_init() {
 
 void print_date() {
   time_t time_now = time(NULL);
+#ifdef ISO_TIME
+  struct tm *component_time = localtime(&time_now);
+  char *ascii_time = isotime(component_time);
+#else
   char *ascii_time = ctime(&time_now);
-
+#endif
   Serial.println(ascii_time);
 }
 
@@ -84,6 +90,24 @@ void cmd_exec(char *buf) {
         }
         else {
           success = false;
+        }
+        break;
+    case 'R': // reboot
+        reboot();
+        break;
+    case 'c': // cat logfile
+        {
+          File data = SD.open(LOGFILE);
+          if (data) {
+            Serial.println(LOGFILE);
+            while (data.available()) {
+              Serial.write(data.read());
+            }
+            data.close();
+          }
+          else {
+            Serial.println(F("READ ERROR"));
+          }
         }
         break;
     default:
@@ -175,7 +199,7 @@ void setup() {
   // Log the boot event to the logfile
   File logfile = SD.open(LOGFILE, FILE_WRITE);
   if (logfile) {
-    logfile.print(boot_time, DEC); // Time in seconds since y2k
+    logfile.print((boot_time + (long)UNIX_OFFSET), DEC); // Time in seconds since y2k
     logfile.println(",BOOT");
     logfile.close();
   }
