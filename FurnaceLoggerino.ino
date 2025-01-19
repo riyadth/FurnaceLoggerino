@@ -92,7 +92,6 @@ void log_state_change(uint32_t timestamp, byte state) {
     log_buf[log_idx].event = STATE_CHG | (state & (FAN_ON | LOW_ON | HIGH_ON));
     log_idx++;
   }
-
 }
 
 bool log_write_size(void) {
@@ -143,7 +142,7 @@ void log_write(void) {
             logfile.println(F(",HEARTBEAT"));
           }
           else if (log_buf[i].event & STATE_CHG) {
-            logfile.print(',');
+            logfile.print(F(",STATE,"));
             logfile.print(log_buf[i].event & FAN_ON ? 1 : 0);
             logfile.print(',');
             logfile.print(log_buf[i].event & LOW_ON ? 1 : 0);
