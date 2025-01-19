@@ -21,6 +21,7 @@
 
 #define LOGFILE     "FURNACE.LOG"
 
+// Use ISO format for 'D'ate output on CLI
 #define ISO_TIME
 
 #define NUM_ITEMS(x)  (sizeof(x) / sizeof(x[0]))
@@ -39,8 +40,10 @@ time_t boot_time;
 time_t last_time;
 time_t last_hb_time;
 time_t last_write_time;
+byte last_input_state = 0xff;
 
 #define HB_INTERVAL (ONE_HOUR / 4)
+#define WRITE_INTERVAL (15 /* seconds */)
 
 /*
  * Logfile functionality
@@ -79,62 +82,85 @@ void log_heartbeat(uint32_t timestamp) {
   }
 }
 
-void log_state_change(uint32_t timestamp, bool fan, bool low, bool high) {
-  byte event =  STATE_CHG           |
-                (fan ? FAN_ON : 0)  |
-                (low ? LOW_ON : 0)  |
-                (high ? HIGH_ON : 0);
-
+void log_state_change(uint32_t timestamp, byte state) {
   if (log_idx < NUM_ITEMS(log_buf)) {
     log_buf[log_idx].timestamp = timestamp;
-    log_buf[log_idx].event = event;
+    log_buf[log_idx].event = STATE_CHG | (state & (FAN_ON | LOW_ON | HIGH_ON));
     log_idx++;
   }
 
 }
 
-unsigned log_entries(void) {
-  return log_idx;
+bool log_write_size(void) {
+  // Return true if buffer is more than 3/4 full
+  return (log_idx > (NUM_ITEMS(log_buf) - (NUM_ITEMS(log_buf) >> 2)));
+}
+
+bool log_data_buffered(void) {
+  return (log_idx > 0);
+}
+
+bool log_write_time(void) {
+  bool time_to_write = false;
+  time_t now = time(NULL);
+
+  if ((log_idx > 0) && (difftime(now, last_write_time) >= WRITE_INTERVAL)) {
+    time_to_write = true;
+    // Note: last_write_time is updated by log_write()
+  }
+
+  return time_to_write;
 }
 
 void log_write(void) {
   // Log the buffered event data to the logfile
+  time_t now = time(NULL);
   if (card_present() && !card_write_protected()) {
     if (card_ejected) {
       // Card was ejected and re-inserted. Re-intitialize the SD subsystem.
       if (sd_init()) {
         card_ejected = false;
       }
+      else {
+        // Re-mount of card failed - abort and try again next time
+        Serial.println(F("CARD INIT FAILED"));
+        return;
+      }
     }
-    File logfile = SD.open(LOGFILE, FILE_WRITE);
-    if (logfile) {
-      for (unsigned i=0; i<log_idx; i++) {
-        logfile.print(log_buf[i].timestamp + (long)UNIX_OFFSET);
-        if (log_buf[i].event & BOOT) {
-          logfile.println(F(",BOOT"));
-        }
-        else if (log_buf[i].event & HEARTBEAT) {
-          logfile.println(F(",HEARTBEAT"));
-        }
-        else if (log_buf[i].event & STATE_CHG) {
-          logfile.print(',');
-          logfile.print(log_buf[i].event & FAN_ON ? 1 : 0);
-          logfile.print(',');
-          logfile.print(log_buf[i].event & LOW_ON ? 1 : 0);
-          logfile.print(',');
-          logfile.println(log_buf[i].event & HIGH_ON ? 1 : 0);
+    if (log_idx > 0) {
+      File logfile = SD.open(LOGFILE, FILE_WRITE);
+      if (logfile) {
+        for (unsigned i=0; i<log_idx; i++) {
+          logfile.print(log_buf[i].timestamp + (long)UNIX_OFFSET);
+          if (log_buf[i].event & BOOT) {
+            logfile.println(F(",BOOT"));
+          }
+          else if (log_buf[i].event & HEARTBEAT) {
+            logfile.println(F(",HEARTBEAT"));
+          }
+          else if (log_buf[i].event & STATE_CHG) {
+            logfile.print(',');
+            logfile.print(log_buf[i].event & FAN_ON ? 1 : 0);
+            logfile.print(',');
+            logfile.print(log_buf[i].event & LOW_ON ? 1 : 0);
+            logfile.print(',');
+            logfile.println(log_buf[i].event & HIGH_ON ? 1 : 0);
+          }
         }
         logfile.close();
         log_idx = 0;
+        last_write_time = now;
       }
-    }
-    else {
-      Serial.println(F("LOGFILE ERROR"));
+      else {
+        Serial.println(F("LOGFILE ERROR"));
+      }
     }
   }
   else {
-    Serial.println(F("CARD NOT PRESENT"));
-    card_ejected = true;
+    if (card_ejected == false) {
+      Serial.println(F("CARD NOT PRESENT"));
+      card_ejected = true;
+    }
   }
 }
 
@@ -204,7 +230,7 @@ void cmd_exec(char *buf) {
     case 'u': // uptime in seconds
         Serial.print(F("Uptime: "));
         Serial.print(difftime(now, boot_time), DEC);
-        Serial.println();
+        Serial.println(F(" seconds"));
         break;
     case 'D': // epochDate - set date via time since epoch
         // Must adjust for localtime
@@ -215,6 +241,7 @@ void cmd_exec(char *buf) {
         }
         else if (isDigit(buf[2])) {
           rtc.adjust(DateTime(strtoul(&buf[2], NULL, 10)));
+          rtc.start();
           now = rtc.now().secondstime();
           print_date();
           // Reboot to sync to new clock time
@@ -229,6 +256,9 @@ void cmd_exec(char *buf) {
         break;
     case 'c': // cat logfile
         log_print();
+        break;
+    case 'E': // TEST EVENT - force re-evaluation of inputs
+        last_input_state = 0xff;
         break;
     case 'f': // flush log buffer
         log_write();
@@ -289,12 +319,13 @@ void setup() {
 
   if (! rtc.initialized() || rtc.lostPower()) {
     rtc.adjust(DateTime(F(__DATE__), F(__TIME__)));
+    rtc.start();
   }
 
   rtc.deconfigureAllTimers();
-  //rtc.start();
   set_system_time(rtc.now().secondstime());
 
+  // Enable RTC chip 1Hz output and enable Arduino interrupt for timekeeping
   rtc.enableSecondTimer();
   attachInterrupt(digitalPinToInterrupt(SQ_WAVE_IN), system_tick, FALLING);
 
@@ -314,16 +345,16 @@ void setup() {
     card_ejected = true;
   }
 
+  // Initialize time variables
   now = time(NULL);
   boot_time = now;
   last_time = boot_time;
+  last_hb_time = boot_time;
 
   // Log the boot event to the logfile
   log_boot(boot_time);
   log_write();
 }
-
-byte last_input_state = 0;
 
 void loop() {
   now = time(NULL);
@@ -334,9 +365,9 @@ void loop() {
   }
 
   // Indicate if card is removed by lighting the red LED
-  digitalWrite(LED_RED, card_present() ? LOW : HIGH);
+  // digitalWrite(LED_RED, card_present() ? LOW : HIGH);
 
-  // Read inputs into a buffer (TODO: Debounce?)
+  // Read inputs into a buffer (TODO: Debounce?, Polarity?)
   byte input_state = (digitalRead(FAN_IN) == LOW ? 0 : FAN_ON) |
                      (digitalRead(LOW_IN) == LOW ? 0 : LOW_ON) |
                      (digitalRead(HIGH_IN) == LOW ? 0 : HIGH_ON);
@@ -345,8 +376,25 @@ void loop() {
   if (now != last_time) {
     last_time = now;
 
+    // Toggle the green LED each time through this loop (0.5Hz)
     digitalWrite(LED_GREEN, (last_time & 1) ? HIGH : LOW);
 
+    // Toggle the red LED if there is a card present and data to write
+    if (card_present()) {
+      // Opposite pattern to green LED
+      if (log_data_buffered()) {
+        digitalWrite(LED_RED, (last_time & 1) ? LOW : HIGH);
+      }
+      else {
+        // Turn off the LED
+        digitalWrite(LED_RED, LOW);
+      }
+    }
+    else {
+        digitalWrite(LED_RED, HIGH);
+    }
+
+    // Log a heartbeat event if heartbeat interval has passed
     if (difftime(now, last_hb_time) >= HB_INTERVAL) {
       log_heartbeat(now);
       last_hb_time = now;
@@ -354,19 +402,13 @@ void loop() {
 
     // This is where we can log any changes, since a second has passed.
     if (input_state != last_input_state) {
-      log_state_change(now, ((input_state & FAN_ON) != 0),
-                            ((input_state & LOW_ON) != 0),
-                            ((input_state & HIGH_ON) != 0));
+      log_state_change(now, input_state);
       last_input_state = input_state;
     }
 
-    // Write every 15 seconds or when log is more than half full
-    if ((log_entries() > (NUM_ITEMS(log_buf) / 2)) || (last_write_time > 15)) {
+    // Write out log periodically or when it has a bunch of entries in it
+    if (log_write_time() || (log_write_size())) {
       log_write();
-      last_write_time = 0;
-    }
-    else {
-      last_write_time++;
     }
   }
 
