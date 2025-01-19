@@ -4,20 +4,20 @@
  */
 
 // I/O provided by the Adafruit Logger shield
-#define SQ_WAVE_IN  (2)
-#define LED_GREEN   (3)
-#define LED_RED     (5)
-#define WRITE_PROT  (8)
-#define CARD_DET    (9)
+#define SQ_WAVE_IN  (2)   /* Falling edge pulse at 1Hz */
+#define LED_GREEN   (3)   /* HIGH to illuminate */
+#define LED_RED     (5)   /* HIGH to illuminate */
+#define WRITE_PROT  (8)   /* HIGH when write protected */
+#define CARD_DET    (9)   /* HIGH when card absent */
 #define SD_CS       (10)
 
 // Temperature sensor using OneWire interface
 #define DS18B20_PIN (7)
 
 // Monitor inputs connected to A0/A1/A2
-#define FAN_IN      (A0)
-#define LOW_IN      (A1)
-#define HIGH_IN     (A2)
+#define FAN_IN      (A0)  /* Open-drain, LOW when fan is on */
+#define LOW_IN      (A1)  /* Open-drain, LOW when low-heat is on */
+#define HIGH_IN     (A2)  /* Open-drain, LOW when high-heat is on */
 
 #define LOGFILE     "FURNACE.LOG"
 
@@ -31,6 +31,10 @@
 #include <RTClib.h>
 #include <time.h>
 #include <avr/wdt.h>
+
+/*
+ * Program global variables
+ */
 
 const int chipSelect = SD_CS;
 bool card_ejected;
@@ -183,6 +187,10 @@ void log_print(void) {
   }
 }
 
+/*
+ * Utility functions
+ */
+
 bool card_present() {
   return (digitalRead(CARD_DET) == LOW);
 }
@@ -199,6 +207,10 @@ void reboot(void) {
   }
 }
 
+/*
+ * SD card subsystem initialization
+ */
+
 bool sd_init() {
   bool success = false;
   Serial.print(F("\nSD Initialization: "));
@@ -212,6 +224,10 @@ bool sd_init() {
 
   return success;
 }
+
+/*
+ * CLI functions
+ */
 
 void print_date() {
   time_t time_now = time(NULL);
@@ -272,27 +288,32 @@ void cmd_exec(char *buf) {
   }
 }
 
-static char cmdbuf[32];
-static byte cmdidx = 0;
+// Static buffers for handle_serial()
+static char cli_buf[32];
+static byte cli_idx = 0;
 
 void handle_serial() {
   while (Serial.available()) {
     int ch=Serial.read();
     if ((ch == '\n') || (ch == '\r')) {
       // Parse buffer if len > 0 && len < size
-      if ((cmdidx > 0) && (cmdidx < sizeof(cmdbuf))) {
-        cmdbuf[cmdidx] = '\0';
-        cmd_exec(cmdbuf);
+      if ((cli_idx > 0) && (cli_idx < sizeof(cli_buf))) {
+        cli_buf[cli_idx] = '\0';
+        cmd_exec(cli_buf);
       }
-      cmdidx = 0;
+      cli_idx = 0;
     } else if (ch != -1) {
       // Add character to buffer if space available
-      if (cmdidx < sizeof(cmdbuf)) {
-        cmdbuf[cmdidx++] = (char)(ch & 0xff);
+      if (cli_idx < sizeof(cli_buf)) {
+        cli_buf[cli_idx++] = (char)(ch & 0xff);
       }
     }
   }
 }
+
+/*
+ * Arduino setup() and loop() functions
+ */
 
 void setup() {
   Serial.begin(115200);
@@ -306,9 +327,9 @@ void setup() {
   pinMode(CARD_DET, INPUT_PULLUP);
   pinMode(WRITE_PROT, INPUT_PULLUP);
 
-  pinMode(FAN_IN, INPUT);
-  pinMode(LOW_IN, INPUT);
-  pinMode(HIGH_IN, INPUT);
+  pinMode(FAN_IN, INPUT_PULLUP);
+  pinMode(LOW_IN, INPUT_PULLUP);
+  pinMode(HIGH_IN, INPUT_PULLUP);
 
   if (! rtc.begin()) {
     Serial.println("RTC ERROR");
@@ -368,9 +389,9 @@ void loop() {
   // digitalWrite(LED_RED, card_present() ? LOW : HIGH);
 
   // Read inputs into a buffer (TODO: Debounce?, Polarity?)
-  byte input_state = (digitalRead(FAN_IN) == LOW ? 0 : FAN_ON) |
-                     (digitalRead(LOW_IN) == LOW ? 0 : LOW_ON) |
-                     (digitalRead(HIGH_IN) == LOW ? 0 : HIGH_ON);
+  byte input_state = (digitalRead(FAN_IN) == HIGH ? 0 : FAN_ON) |
+                     (digitalRead(LOW_IN) == HIGH ? 0 : LOW_ON) |
+                     (digitalRead(HIGH_IN) == HIGH ? 0 : HIGH_ON);
 
   // Check if time has changed by at least a second
   if (now != last_time) {
