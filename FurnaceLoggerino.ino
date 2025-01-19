@@ -70,28 +70,24 @@ typedef struct {
 log_entry_t log_buf[32];
 unsigned log_idx = 0;
 
-void log_boot(uint32_t timestamp) {
+void log_event(uint32_t timestamp, byte event) {
   if (log_idx < NUM_ITEMS(log_buf)) {
     log_buf[log_idx].timestamp = timestamp;
-    log_buf[log_idx].event = BOOT;
+    log_buf[log_idx].event = event;
     log_idx++;
   }
+}
+
+void log_boot(uint32_t timestamp) {
+  log_event(timestamp, BOOT);
 }
 
 void log_heartbeat(uint32_t timestamp) {
-  if (log_idx < NUM_ITEMS(log_buf)) {
-    log_buf[log_idx].timestamp = timestamp;
-    log_buf[log_idx].event = HEARTBEAT;
-    log_idx++;
-  }
+  log_event(timestamp, HEARTBEAT);
 }
 
 void log_state_change(uint32_t timestamp, byte state) {
-  if (log_idx < NUM_ITEMS(log_buf)) {
-    log_buf[log_idx].timestamp = timestamp;
-    log_buf[log_idx].event = STATE_CHG | (state & (FAN_ON | LOW_ON | HIGH_ON));
-    log_idx++;
-  }
+  log_event(timestamp, STATE_CHG | (state & (FAN_ON | LOW_ON | HIGH_ON)));
 }
 
 bool log_write_size(void) {
@@ -107,9 +103,15 @@ bool log_write_time(void) {
   bool time_to_write = false;
   time_t now = time(NULL);
 
-  if ((log_idx > 0) && (difftime(now, last_write_time) >= WRITE_INTERVAL)) {
-    time_to_write = true;
-    // Note: last_write_time is updated by log_write()
+  if (log_idx > 0) {
+    if (difftime(now, last_write_time) >= WRITE_INTERVAL) {
+      time_to_write = true;
+      // Note: last_write_time is reset by log_write() and below
+    }
+  }
+  else {
+    // Nothing to write, so postpone next write interval until data is present
+    last_write_time = now;
   }
 
   return time_to_write;

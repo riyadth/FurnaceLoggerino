@@ -33,4 +33,39 @@ The software is based on the Arduino IDE and libraries from Adafruit.
 
 ### User Interface
 
-TBD
+A simple CLI is implemented with single-letter commands and optional
+parameters. The command list is as follows:
+
+* `u` - print uptime in seconds
+* `D [unix-epoch]` - print date or set date
+* `R` - reboot
+* `c` - print (cat) logfile
+* `E` - insert a test event (simulate state change)
+* `f` - flush the log buffer from RAM to SD
+
+In addition, the green and red LEDs on the data logger shield are used to
+convey operating state. The blink patterns are:
+
+* blinking green = sampling loop is running (ie, code is executing)
+* blinking red = data is available in RAM buffer (do not remove card)
+* solid red = SD card is removed
+
+### Data Format
+
+The SD card should be formatted as FAT16 or FAT32.
+For the initial implementation a 2GB SD card was used, formatted as
+FAT16 on a Linux host.
+
+The logger writes the file `FURNACE.LOG` as a CSV file in the following
+format:
+
+    1737287844,BOOT
+    1737278921,HEARTBEAT
+    1737278941,STATE,0,0,0
+    1737278992,STATE,1,1,0
+
+The first field is the Unix epoch timestamp. There are three different
+entry types.
+A `BOOT` event (indicating when the system was powered up),
+a `HEARTBEAT` event (logged every 15 minutes),
+and a `STATE` event (indicating the new value of the fan, low and high inputs).
