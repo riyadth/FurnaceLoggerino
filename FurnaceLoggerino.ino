@@ -3,6 +3,8 @@
  * https://learn.adafruit.com/adafruit-data-logger-shield
  */
 
+#define VERSION "v1.0.0"
+
 // I/O provided by the Adafruit Logger shield
 #define SQ_WAVE_IN  (2)   /* Falling edge pulse at 1Hz */
 #define LED_GREEN   (3)   /* HIGH to illuminate */
@@ -16,8 +18,8 @@
 
 // Monitor inputs connected to A0/A1/A2
 #define FAN_IN      (A0)  /* Open-drain, LOW when fan is on */
-#define LOW_IN      (A1)  /* Open-drain, LOW when low-heat is on */
-#define HIGH_IN     (A2)  /* Open-drain, LOW when high-heat is on */
+#define HIGH_IN     (A1)  /* Open-drain, LOW when high-heat is on */
+#define LOW_IN      (A2)  /* Open-drain, LOW when low-heat is on */
 
 #define LOGFILE     "FURNACE.LOG"
 
@@ -230,6 +232,11 @@ bool sd_init() {
  * CLI functions
  */
 
+void print_version() {
+  Serial.print(F("Version: "));
+  Serial.println(F(VERSION));
+}
+
 void print_date() {
   time_t time_now = time(NULL);
 #ifdef ISO_TIME
@@ -280,11 +287,17 @@ void cmd_exec(char *buf) {
     case 'f': // flush log buffer
         log_write();
         break;
+    case 'v': // Print version
+        print_version();
+        break;
     default:
         success = false;
   }
 
-  if (success == false) {
+  if (success == true) {
+    Serial.println(F("OK"));
+  }
+  else {
     Serial.println(F("ERROR"));
   }
 }
@@ -318,6 +331,8 @@ void handle_serial() {
 
 void setup() {
   Serial.begin(115200);
+
+  print_version();
 
   pinMode(LED_GREEN, OUTPUT);
   digitalWrite(LED_GREEN, LOW);
@@ -376,6 +391,8 @@ void setup() {
   // Log the boot event to the logfile
   log_boot(boot_time);
   log_write();
+
+  Serial.println(F("BOOT"));
 }
 
 void loop() {
