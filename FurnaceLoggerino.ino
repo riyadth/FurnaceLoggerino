@@ -3,7 +3,7 @@
  * https://learn.adafruit.com/adafruit-data-logger-shield
  */
 
-#define VERSION "v1.0.0"
+#define VERSION "v1.0.1"
 
 // I/O provided by the Adafruit Logger shield
 #define SQ_WAVE_IN  (2)   /* Falling edge pulse at 1Hz */
@@ -165,6 +165,7 @@ void log_write(void) {
   }
   else {
     if (card_ejected == false) {
+      SD.end();
       Serial.println(F("CARD NOT PRESENT"));
       card_ejected = true;
     }
@@ -402,9 +403,6 @@ void loop() {
   if (Serial.available()) {
     handle_serial();
   }
-
-  // Indicate if card is removed by lighting the red LED
-  // digitalWrite(LED_RED, card_present() ? LOW : HIGH);
 
   // Read inputs into a buffer (TODO: Debounce?, Polarity?)
   byte input_state = (digitalRead(FAN_IN) == HIGH ? 0 : FAN_ON) |
