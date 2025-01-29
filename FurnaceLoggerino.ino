@@ -3,7 +3,7 @@
  * https://learn.adafruit.com/adafruit-data-logger-shield
  */
 
-#define VERSION "v1.0.1"
+#define VERSION "v1.0.2"
 
 // I/O provided by the Adafruit Logger shield
 #define SQ_WAVE_IN  (2)   /* Falling edge pulse at 1Hz */
@@ -161,13 +161,6 @@ void log_write(void) {
       else {
         Serial.println(F("LOGFILE ERROR"));
       }
-    }
-  }
-  else {
-    if (card_ejected == false) {
-      SD.end();
-      Serial.println(F("CARD NOT PRESENT"));
-      card_ejected = true;
     }
   }
 }
@@ -417,7 +410,7 @@ void loop() {
     digitalWrite(LED_GREEN, (last_time & 1) ? HIGH : LOW);
 
     // Toggle the red LED if there is a card present and data to write
-    if (card_present()) {
+    if (card_present() && (card_ejected == false)) {
       // Opposite pattern to green LED
       if (log_data_buffered()) {
         digitalWrite(LED_RED, (last_time & 1) ? LOW : HIGH);
@@ -428,7 +421,12 @@ void loop() {
       }
     }
     else {
-        digitalWrite(LED_RED, HIGH);
+      digitalWrite(LED_RED, HIGH);
+      if (card_ejected == false) {
+        SD.end();
+        Serial.println(F("CARD NOT PRESENT"));
+        card_ejected = true;
+      }
     }
 
     // Log a heartbeat event if heartbeat interval has passed
